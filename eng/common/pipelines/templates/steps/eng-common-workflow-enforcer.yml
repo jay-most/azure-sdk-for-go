@@ -1,5 +1,5 @@
 steps:
-  - ${{ if eq(variables['Build.Reason'], 'PullRequest') }}:
+  - ${{ if and(eq(variables['Build.Reason'], 'PullRequest'), not(endsWith(variables['Build.Repository.Name'], '-pr'))) }}:
     - pwsh: |
         Set-PsDebug -Trace 1
         # Find the default branch of the repo
