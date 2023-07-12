@@ -13,4 +13,5 @@ type ClientOptions struct {
 	// When EnableContentResponseOnWrite is false will cause the response to have a null resource. This reduces networking and CPU load by not sending the resource back over the network and serializing it on the client.
 	// The default is false.
 	EnableContentResponseOnWrite bool
+	PreferredRegions             []string // ["East US", Central US"]
 }

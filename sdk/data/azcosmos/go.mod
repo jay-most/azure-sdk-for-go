@@ -4,9 +4,9 @@ go 1.18
 
 require (
 	github.com/Azure/azure-sdk-for-go v68.0.0+incompatible
-	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.4.0
+	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.6.1
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.0.0
-	github.com/Azure/azure-sdk-for-go/sdk/internal v1.2.0
+	github.com/Azure/azure-sdk-for-go/sdk/internal v1.3.0
 	github.com/stretchr/testify v1.7.0
 )
 
