@@ -16,6 +16,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/Azure/azure-sdk-for-go/sdk/cognitiveservices/azopenai"
+	"github.com/Azure/azure-sdk-for-go/sdk/internal/recording"
 	"github.com/stretchr/testify/require"
 )
 
@@ -77,21 +78,29 @@ func TestNewClientWithKeyCredential(t *testing.T) {
 	}
 }
 
-func TestClient_GetCompletionsStream(t *testing.T) {
-	body := azopenai.CompletionsOptions{
-		Prompt:      []*string{to.Ptr("What is Azure OpenAI?")},
-		MaxTokens:   to.Ptr(int32(2048)),
-		Temperature: to.Ptr(float32(0.0)),
-	}
-
+func TestGetCompletionsStream_AzureOpenAI(t *testing.T) {
 	cred, err := azopenai.NewKeyCredential(apiKey)
 	require.NoError(t, err)
 
 	client, err := azopenai.NewClientWithKeyCredential(endpoint, cred, completionsModelDeployment, newClientOptionsForTest(t))
-	if err != nil {
-		t.Errorf("NewClientWithKeyCredential() error = %v", err)
-		return
+	require.NoError(t, err)
+
+	testGetCompletionsStream(t, client, true)
+}
+
+func TestGetCompletionsStream_OpenAI(t *testing.T) {
+	client := newOpenAIClientForTest(t)
+	testGetCompletionsStream(t, client, false)
+}
+
+func testGetCompletionsStream(t *testing.T, client *azopenai.Client, isAzure bool) {
+	body := azopenai.CompletionsOptions{
+		Prompt:      []string{"What is Azure OpenAI?"},
+		MaxTokens:   to.Ptr(int32(2048)),
+		Temperature: to.Ptr(float32(0.0)),
+		Model:       to.Ptr(openAICompletionsModel),
 	}
+
 	response, err := client.GetCompletionsStream(context.TODO(), body, nil)
 	if err != nil {
 		t.Errorf("Client.GetCompletionsStream() error = %v", err)
@@ -102,6 +111,14 @@ func TestClient_GetCompletionsStream(t *testing.T) {
 
 	var sb strings.Builder
 	var eventCount int
+
+	if isAzure {
+		// there's a bug right now where the first event comes back empty
+		// Issue: https://github.com/Azure/azure-sdk-for-go/issues/21086
+		_, err := reader.Read()
+		require.NoError(t, err)
+	}
+
 	for {
 		event, err := reader.Read()
 		if err == io.EOF {
@@ -112,18 +129,39 @@ func TestClient_GetCompletionsStream(t *testing.T) {
 			t.Errorf("reader.Read() error = %v", err)
 			return
 		}
+
 		sb.WriteString(*event.Choices[0].Text)
 	}
 	got := sb.String()
 	const want = "\n\nAzure OpenAI is a platform from Microsoft that provides access to OpenAI's artificial intelligence (AI) technologies. It enables developers to build, train, and deploy AI models in the cloud. Azure OpenAI provides access to OpenAI's powerful AI technologies, such as GPT-3, which can be used to create natural language processing (NLP) applications, computer vision models, and reinforcement learning models."
-	if got != want {
-		i := 0
-		for i < len(got) && i < len(want) && got[i] == want[i] {
-			i++
-		}
-		t.Errorf("Client.GetCompletionsStream() text[%d] = %c, want %c", i, got[i], want[i])
+
+	require.Equal(t, want, got)
+	require.Equal(t, 86, eventCount)
+}
+
+func TestClient_GetCompletions_Error(t *testing.T) {
+	if recording.GetRecordMode() == recording.PlaybackMode {
+		t.Skip()
 	}
-	if eventCount != 86 {
-		t.Errorf("Client.GetCompletionsStream() got = %v, want %v", eventCount, 1)
+
+	doTest := func(t *testing.T, client *azopenai.Client) {
+		streamResp, err := client.GetCompletionsStream(context.Background(), azopenai.CompletionsOptions{
+			Prompt:      []string{"What is Azure OpenAI?"},
+			MaxTokens:   to.Ptr(int32(2048 - 127)),
+			Temperature: to.Ptr(float32(0.0)),
+			Model:       &openAICompletionsModel,
+		}, nil)
+		require.Empty(t, streamResp)
+		assertResponseIsError(t, err)
 	}
+
+	t.Run("AzureOpenAI", func(t *testing.T) {
+		client := newBogusAzureOpenAIClient(t, completionsModelDeployment)
+		doTest(t, client)
+	})
+
+	t.Run("OpenAI", func(t *testing.T) {
+		client := newBogusOpenAIClient(t)
+		doTest(t, client)
+	})
 }

@@ -23,7 +23,7 @@ import (
 )
 
 var chatCompletionsRequest = azopenai.ChatCompletionsOptions{
-	Messages: []*azopenai.ChatMessage{
+	Messages: []azopenai.ChatMessage{
 		{
 			Role:    to.Ptr(azopenai.ChatRole("user")),
 			Content: to.Ptr("Count to 10, with a comma between each number, no newlines and a period at the end. E.g., 1, 2, 3, ..."),
@@ -31,7 +31,7 @@ var chatCompletionsRequest = azopenai.ChatCompletionsOptions{
 	},
 	MaxTokens:   to.Ptr(int32(1024)),
 	Temperature: to.Ptr(float32(0.0)),
-	Model:       &openAIChatCompletionsModelDeployment,
+	Model:       &openAIChatCompletionsModel,
 }
 
 var expectedContent = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10."
@@ -54,7 +54,7 @@ func TestClient_GetChatCompletionsStream(t *testing.T) {
 	chatClient, err := azopenai.NewClientWithKeyCredential(endpoint, cred, chatCompletionsModelDeployment, newClientOptionsForTest(t))
 	require.NoError(t, err)
 
-	testGetChatCompletionsStream(t, chatClient)
+	testGetChatCompletionsStream(t, chatClient, true)
 }
 
 func TestClient_OpenAI_GetChatCompletions(t *testing.T) {
@@ -64,12 +64,12 @@ func TestClient_OpenAI_GetChatCompletions(t *testing.T) {
 
 func TestClient_OpenAI_GetChatCompletionsStream(t *testing.T) {
 	chatClient := newOpenAIClientForTest(t)
-	testGetChatCompletionsStream(t, chatClient)
+	testGetChatCompletionsStream(t, chatClient, false)
 }
 
 func testGetChatCompletions(t *testing.T, client *azopenai.Client) {
 	expected := azopenai.ChatCompletions{
-		Choices: []*azopenai.ChatChoice{
+		Choices: []azopenai.ChatChoice{
 			{
 				Message: &azopenai.ChatChoiceMessage{
 					Role:    &expectedRole,
@@ -100,15 +100,22 @@ func testGetChatCompletions(t *testing.T, client *azopenai.Client) {
 	require.Equal(t, expected, resp.ChatCompletions)
 }
 
-func testGetChatCompletionsStream(t *testing.T, client *azopenai.Client) {
+func testGetChatCompletionsStream(t *testing.T, client *azopenai.Client, isAzure bool) {
 	streamResp, err := client.GetChatCompletionsStream(context.Background(), chatCompletionsRequest, nil)
 	require.NoError(t, err)
+
+	if isAzure {
+		// there's a bug right now where the first event comes back empty
+		// Issue: https://github.com/Azure/azure-sdk-for-go/issues/21086
+		_, err := streamResp.ChatCompletionsStream.Read()
+		require.NoError(t, err)
+	}
 
 	// the data comes back differently for streaming
 	// 1. the text comes back in the ChatCompletion.Delta field
 	// 2. the role is only sent on the first streamed ChatCompletion
 	// check that the role came back as well.
-	var choices []*azopenai.ChatChoice
+	var choices []azopenai.ChatChoice
 
 	for {
 		completion, err := streamResp.ChatCompletionsStream.Read()
@@ -171,7 +178,7 @@ func TestClient_GetChatCompletions_InvalidModel(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = chatClient.GetChatCompletions(context.Background(), azopenai.ChatCompletionsOptions{
-		Messages: []*azopenai.ChatMessage{
+		Messages: []azopenai.ChatMessage{
 			{
 				Role:    to.Ptr(azopenai.ChatRole("user")),
 				Content: to.Ptr("Count to 100, with a comma between each number and no newlines. E.g., 1, 2, 3, ..."),
@@ -184,4 +191,27 @@ func TestClient_GetChatCompletions_InvalidModel(t *testing.T) {
 	var respErr *azcore.ResponseError
 	require.ErrorAs(t, err, &respErr)
 	require.Equal(t, "DeploymentNotFound", respErr.ErrorCode)
+}
+
+func TestClient_GetChatCompletionsStream_Error(t *testing.T) {
+	if recording.GetRecordMode() == recording.PlaybackMode {
+		t.Skip()
+	}
+
+	doTest := func(t *testing.T, client *azopenai.Client) {
+		t.Helper()
+		streamResp, err := client.GetChatCompletionsStream(context.Background(), chatCompletionsRequest, nil)
+		require.Empty(t, streamResp)
+		assertResponseIsError(t, err)
+	}
+
+	t.Run("AzureOpenAI", func(t *testing.T) {
+		client := newBogusAzureOpenAIClient(t, chatCompletionsModelDeployment)
+		doTest(t, client)
+	})
+
+	t.Run("OpenAI", func(t *testing.T) {
+		client := newBogusOpenAIClient(t)
+		doTest(t, client)
+	})
 }
